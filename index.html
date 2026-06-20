@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamWave - IPTV Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { touch-action: manipulation; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+        .hidden-mobile { display: none; }
+        @media (min-width: 1024px) { .hidden-mobile { display: block; } }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen flex flex-col">
+
+    <header class="bg-gray-900 border-b border-gray-800 p-4 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center gap-4">
+            <h1 class="text-xl font-bold text-white flex items-center gap-2"><i class="fa-solid fa-tv text-blue-500"></i> StreamWave</h1>
+            
+            <div class="flex flex-1 flex-col md:flex-row gap-2 w-full max-w-4xl">
+                <select id="conn-mode" onchange="toggleMode()" class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-sm text-gray-300">
+                    <option value="m3u">Playlist M3U</option>
+                    <option value="xtream">Xtream Codes API</option>
+                </select>
+
+                <div id="m3u-inputs" class="flex-1 flex gap-2">
+                    <input type="text" id="m3u-url" class="flex-1 bg-gray-950 border border-gray-800 rounded-lg p-2 text-sm" placeholder="URL .m3u...">
+                </div>
+
+                <div id="xtream-inputs" class="hidden flex-1 flex gap-2">
+                    <input type="text" id="xtream-host" class="flex-1 bg-gray-950 border border-gray-800 rounded-lg p-2 text-sm" placeholder="Host (ex: http://domain:port)">
+                    <input type="text" id="xtream-user" class="flex-1 bg-gray-950 border border-gray-800 rounded-lg p-2 text-sm" placeholder="User">
+                    <input type="password" id="xtream-pass" class="flex-1 bg-gray-950 border border-gray-800 rounded-lg p-2 text-sm" placeholder="Pass">
+                </div>
+                
+                <button onclick="handleLoad()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg text-sm font-bold shadow-lg shadow-blue-900/20">Charger</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl mx-auto w-full p-4 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <section id="sidebar" class="lg:col-span-4 bg-gray-900 border border-gray-800 rounded-2xl h-[50vh] lg:h-[80vh] flex flex-col overflow-hidden">
+            <div id="channel-list" class="flex-1 overflow-y-auto p-2 divide-y divide-gray-800">
+                <div class="p-8 text-center text-gray-500 italic">Configurez votre source pour charger les chaînes...</div>
+            </div>
+        </section>
+        <section class="lg:col-span-8">
+            <div class="bg-black rounded-2xl overflow-hidden aspect-video shadow-2xl relative">
+                <video id="video-player" controls autoplay class="w-full h-full"></video>
+            </div>
+            <div id="status-msg" class="mt-4 p-4 rounded-xl bg-gray-900 border border-gray-800 text-sm text-gray-400">
+                Prêt. Si le flux ne se lance pas, vérifiez votre extension CORS.
+            </div>
+        </section>
+    </main>
+
+    <script>
+        function toggleMode() {
+            const mode = document.getElementById('conn-mode').value;
+            const isXtream = mode === 'xtream';
+            document.getElementById('m3u-inputs').classList.toggle('hidden', isXtream);
+            document.getElementById('xtream-inputs').classList.toggle('hidden', !isXtream);
+        }
+
+        async function handleLoad() {
+            const mode = document.getElementById('conn-mode').value;
+            const listEl = document.getElementById('channel-list');
+            listEl.innerHTML = '<div class="p-4 text-center">Chargement...</div>';
+            
+            if (mode === 'm3u') {
+                const url = document.getElementById('m3u-url').value;
+                loadM3U(url);
+            } else {
+                loadXtream();
+            }
+        }
+
+        async function loadXtream() {
+            const host = document.getElementById('xtream-host').value.replace(/\/$/, '');
+            const user = document.getElementById('xtream-user').value;
+            const pass = document.getElementById('xtream-pass').value;
+
+            try {
+                const response = await fetch(`${host}/player_api.php?username=${user}&password=${pass}&action=get_live_streams`);
+                const data = await response.json();
+                renderChannels(data.map(c => ({ name: c.name, stream: `${host}/live/${user}/${pass}/${c.stream_id}.m3u8` })));
+            } catch (err) {
+                document.getElementById('status-msg').innerText = "Erreur : CORS bloqué ou mauvais accès. Installez l'extension 'Allow CORS'.";
+            }
+        }
+
+        async function loadM3U(url) {
+            try {
+                const response = await fetch(url);
+                const text = await response.text();
+                // Simple parser
+                const lines = text.split('\n');
+                let channels = [];
+                for(let i=0; i<lines.length; i++) {
+                    if(lines[i].startsWith('#EXTINF')) {
+                        channels.push({ name: lines[i].split(',')[1], stream: lines[i+1] });
+                    }
+                }
+                renderChannels(channels);
+            } catch (err) {
+                document.getElementById('status-msg').innerText = "Erreur de chargement M3U.";
+            }
+        }
+
+        function renderChannels(channels) {
+            const container = document.getElementById('channel-list');
+            container.innerHTML = '';
+            channels.forEach(ch => {
+                const div = document.createElement('div');
+                div.className = "p-3 hover:bg-gray-800 cursor-pointer text-sm border-b border-gray-800";
+                div.innerText = ch.name;
+                div.onclick = () => playStream(ch.stream);
+                container.appendChild(div);
+            });
+        }
+
+        function playStream(url) {
+            const video = document.getElementById('video-player');
+            if (Hls.isSupported()) {
+                const hls = new Hls();
+                hls.loadSource(url);
+                hls.attachMedia(video);
+                video.play();
+            } else {
+                video.src = url;
+            }
+        }
+    </script>
+</body>
+  </html>
